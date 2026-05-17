@@ -11,6 +11,7 @@ import json
 import pytest
 
 from scr.simulation.agent_decision.retry_tracker import (
+    RetryTracker,
     ValidationResult,
     ValidationStage,
     classify_root_cause,
@@ -113,6 +114,81 @@ class TestValidationResult:
         assert r.success is True
         assert r.response == "ok"
         assert r.error_message == ""
+
+
+# ---------------------------------------------------------------------------
+# RetryTracker summary - event log de-duplication
+# ---------------------------------------------------------------------------
+
+
+class TestRetryTrackerSummary:
+    """Retry summaries should count canonical retry events, not event bus mirrors."""
+
+    def test_summary_prefers_canonical_retry_records(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        run_id = "test-run"
+        events_dir = tmp_path / "data" / run_id
+        events_dir.mkdir(parents=True)
+
+        retry_data = {
+            "agent_id": "agent_1",
+            "step": 4,
+            "attempt": 1,
+            "error_type": "timeout",
+            "error_message": "Timeout after 120.0s",
+            "root_cause_hint": "timeout",
+        }
+        events = [
+            {"ts": "2026-05-11T00:00:00", "event": "retry", "type": "retry", "data": retry_data},
+            {"ts": "2026-05-11T00:00:00", "event": "retry", "type": "event_bus", "data": retry_data},
+        ]
+        for step in range(1, 5):
+            events.append(
+                {
+                    "ts": "2026-05-11T00:00:00",
+                    "event": "llm_request",
+                    "type": "decision",
+                    "data": {"agent_id": "agent_1", "step": step},
+                }
+            )
+        with open(events_dir / "events.jsonl", "w") as f:
+            for event in events:
+                f.write(json.dumps(event) + "\n")
+
+        summary = RetryTracker(run_id).summary_for_run()
+
+        assert summary["total_retries"] == 1
+        assert summary["decision_count"] == 4
+        assert summary["retried_decision_count"] == 1
+        assert summary["retry_rate"] == 0.25
+        assert summary["error_breakdown"] == {"timeout": 1}
+
+    def test_summary_falls_back_to_event_bus_records(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        run_id = "test-run"
+        events_dir = tmp_path / "data" / run_id
+        events_dir.mkdir(parents=True)
+
+        event = {
+            "ts": "2026-05-11T00:00:00",
+            "event": "retry",
+            "type": "event_bus",
+            "data": {
+                "agent_id": "agent_1",
+                "step": 4,
+                "attempt": 1,
+                "error_type": "validation_contextual",
+                "error_message": "Target agent 'all' not found",
+                "root_cause_hint": "state_hallucination",
+            },
+        }
+        with open(events_dir / "events.jsonl", "w") as f:
+            f.write(json.dumps(event) + "\n")
+
+        summary = RetryTracker(run_id).summary_for_run()
+
+        assert summary["total_retries"] == 1
+        assert summary["error_breakdown"] == {"validation_contextual": 1}
 
 
 # ---------------------------------------------------------------------------

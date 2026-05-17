@@ -229,7 +229,8 @@ class RetryTracker:
         """Read retry records, preferring events.jsonl over debug/retry_log.jsonl."""
         events_path = Path(f"data/{self.run_id}/events.jsonl")
         if events_path.exists():
-            records: List[dict] = []
+            primary_records: List[dict] = []
+            fallback_records: List[dict] = []
             with open(events_path) as f:
                 for line in f:
                     line = line.strip()
@@ -241,6 +242,10 @@ class RetryTracker:
                         continue
                     if event.get("event") != "retry":
                         continue
+                    # sim_logger emits canonical retry records with type="retry".
+                    # The event bus may also mirror the same retry with type="event_bus";
+                    # keep those only as a fallback for older logs that lack canonical records.
+                    is_primary = event.get("type") == "retry"
                     # Extract the data dict and merge top-level fields
                     rec = dict(event.get("data", {}))
                     # Ensure required fields are present (fall back to event-level)
@@ -259,8 +264,38 @@ class RetryTracker:
                     rec.setdefault("error_message", rec.get("error_type", ""))
                     rec.setdefault("attempt", 1)
                     rec.setdefault("max_attempts", 1)
-                    records.append(rec)
-        return records
+                    if is_primary:
+                        primary_records.append(rec)
+                    else:
+                        fallback_records.append(rec)
+            return primary_records or fallback_records
+        return []
+
+    def _read_decision_count(self) -> int:
+        """Count unique agent decisions from decision-request events."""
+        events_path = Path(f"data/{self.run_id}/events.jsonl")
+        if not events_path.exists():
+            return 0
+
+        decisions = set()
+        with open(events_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("event") != "llm_request" or event.get("type") != "decision":
+                    continue
+                data = event.get("data", {})
+                agent_id = data.get("agent_id") or event.get("agent_id")
+                step = data.get("step", event.get("step"))
+                if agent_id and step is not None:
+                    decisions.add((agent_id, step))
+
+        return len(decisions)
 
     def summary_for_run(self) -> dict:
         """Read JSONL log and write ``data/<run_id>/debug/retry_summary.json``.
@@ -272,6 +307,8 @@ class RetryTracker:
             summary: dict = {
                 "run_id": self.run_id,
                 "total_retries": 0,
+                "decision_count": self._read_decision_count(),
+                "retried_decision_count": 0,
                 "error_breakdown": {},
                 "root_cause_breakdown": {},
                 "hotspot_agents": [],
@@ -303,11 +340,13 @@ class RetryTracker:
                 for step, cnt in step_counter.most_common(5)
             ]
 
-            # Retry rate: retries / unique (agent, step) pairs
-            unique_decisions = len(
+            # Retry rate: retries / all unique decision requests when available.
+            retried_decision_count = len(
                 {(r["agent_id"], r["step"]) for r in records}
             )
-            retry_rate = total / unique_decisions if unique_decisions else 0.0
+            decision_count = self._read_decision_count()
+            retry_denominator = max(decision_count, retried_decision_count)
+            retry_rate = total / retry_denominator if retry_denominator else 0.0
 
             # Pattern detection
             patterns: List[str] = []
@@ -340,6 +379,8 @@ class RetryTracker:
             summary = {
                 "run_id": self.run_id,
                 "total_retries": total,
+                "decision_count": decision_count,
+                "retried_decision_count": retried_decision_count,
                 "error_breakdown": dict(error_counter),
                 "root_cause_breakdown": dict(root_cause_counter),
                 "hotspot_agents": hotspot_agents,

@@ -82,15 +82,20 @@ def phy_env_step(checkpoint: Checkpoint):
             prey_details = (
                 f"Prey {new_prey.id} spawned "
                 f"with HP={new_prey.hp}, physical_ability={new_prey.physical_ability}, "
-                f"meat_units={new_prey.get_meat_units()}, "
-                f"nutrition={new_prey.nutrition} HP per meat unit"
+                f"reward_hp={new_prey.get_reward_hp()}, "
+                f"num_agents_to_kill={new_prey.num_agents_to_kill}"
             )
             checkpoint.add_observation(
                 step=checkpoint.metadata.current_time_step,
                 agent_id="environment",
                 details=prey_details
             )
-            logger.observation(f"Prey {new_prey.id} spawned with HP={new_prey.hp}, physical_ability={new_prey.physical_ability}, meat_units={new_prey.get_meat_units()}, nutrition={new_prey.nutrition} HP per meat unit")
+            logger.observation(
+                f"Prey {new_prey.id} spawned with HP={new_prey.hp}, "
+                f"physical_ability={new_prey.physical_ability}, "
+                f"reward_hp={new_prey.get_reward_hp()}, "
+                f"num_agents_to_kill={new_prey.num_agents_to_kill}"
+            )
     except Exception as e:
         logger.error(f"Error during prey spawn: {str(e)}")
     
