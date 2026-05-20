@@ -35,6 +35,7 @@ class LLMClient:
         litellm_model = get_litellm_model_string(self.provider, model)
 
         merged_kwargs = {**self.extra_kwargs, **kwargs}
+        merged_kwargs.pop("on_token", None)
 
         t0 = time.time()
         response = litellm.completion(
@@ -81,6 +82,7 @@ class LLMClient:
         litellm_model = get_litellm_model_string(self.provider, model)
 
         merged_kwargs = {**self.extra_kwargs, **kwargs}
+        merged_kwargs.pop("on_token", None)
 
         t0 = time.time()
         response = await litellm.acompletion(

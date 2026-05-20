@@ -40,14 +40,26 @@ class PreyAnimal(BaseModel):
         self.hp -= actual_damage
         return actual_damage
     
-    def get_meat_units(self) -> int:
+    def get_reward_hp(self) -> int:
         """
-        Get the number of meat units the prey provides when successfully hunted.
+        Get the HP reward provided when this prey is killed.
         
         Returns:
-            int: Number of meat units
+            int: HP reward provided by the prey
         """
-        return self.meat_units
+        return self.max_hp
+
+    def get_meat_units(self) -> int:
+        """
+        Deprecated compatibility alias for the old meat-unit API.
+
+        The current simulation rewards hunting by adding HP directly to the
+        killing agent. New code should use get_reward_hp() or max_hp instead.
+
+        Returns:
+            int: HP reward provided by the prey
+        """
+        return self.get_reward_hp()
     
     def counter_fight(self) -> int:
         """
